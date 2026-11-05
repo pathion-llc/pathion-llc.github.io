@@ -112,9 +112,11 @@ async function realApproval(what) {
   $("project").textContent = what.project;
   var h, body = $("body");
   if (what.words !== undefined) {
-    $("whatLabel").textContent = "Excuse";
-    $("what").textContent = what.key.replace("declaration:", "");
-    var q = document.createElement("blockquote"); q.textContent = what.words; body.appendChild(q);
+    var setting = what.key.indexOf("workspace:") === 0;
+    $("whatLabel").textContent = setting ? "Setting" : "Excuse";
+    $("what").textContent = setting ? (what.key.indexOf("switches") > 0 ? "Switching Ref4ree off or on" : "Which excuses need your approval")
+      : what.key.replace("declaration:", "");
+    var q = document.createElement("blockquote"); q.style.whiteSpace = "pre-wrap"; q.textContent = what.words; body.appendChild(q);
     h = hex(await sha(enc.encode(what.words.trim())));
   } else {
     $("whatLabel").textContent = what.new === null ? "Removes file" : "File";
