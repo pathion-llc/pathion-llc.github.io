@@ -32,7 +32,7 @@ footer{margin-top:24px;font-size:13px;color:var(--dim)}
 <body>
 <main>
 <div id="real" hidden>
-  <h1>Approve this change?</h1>
+  <h1 id="title">Approve this change?</h1>
   <p>Your face, fingerprint or PIN approves exactly what is shown here, and nothing else. If it changes afterwards, your approval no longer counts.</p>
   <section>
     <dl><dt>Project</dt><dd id="project"></dd><dt id="whatLabel"></dt><dd id="what"></dd></dl>
@@ -97,41 +97,71 @@ async function unpack(text) {
   return JSON.parse(await new Response(stream).text());
 }
 
+// anything a person cannot see is shown by name: invisible letters and text-direction marks could hide what a line does
+function visible(text) {
+  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u180e\u200b-\u200f\u2028-\u202f\u205f-\u206f\ufeff\ufff9-\ufffb]/g, function (c) {
+    return "\u27e6U+" + c.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0") + "\u27e7";
+  });
+}
+
+// the changes in order, as they really are: a line moved is a line taken out and a line put in
+function changes(oldLines, newLines) {
+  var n = oldLines.length, m = newLines.length, i, j;
+  var same = [];
+  for (i = 0; i <= n; i++) { same.push(new Uint32Array(m + 1)); }
+  for (i = n - 1; i >= 0; i--) { for (j = m - 1; j >= 0; j--) {
+    same[i][j] = oldLines[i] === newLines[j] ? same[i + 1][j + 1] + 1 : Math.max(same[i + 1][j], same[i][j + 1]);
+  } }
+  var out = [];
+  i = 0; j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && oldLines[i] === newLines[j]) { out.push(["same", newLines[j]]); i++; j++; }
+    else if (j < m && (i === n || same[i][j + 1] >= same[i + 1][j])) { out.push(["add", newLines[j]]); j++; }
+    else { out.push(["del", oldLines[i]]); i++; }
+  }
+  return out;
+}
+
 function showLines(what) {
   var pre = document.createElement("pre");
   var newText = what.new === null ? "" : new TextDecoder().decode(unb64(what.new));
-  var oldLines = what.old.split("\n"), newLines = newText.split("\n");
-  var oldSet = new Set(oldLines), newSet = new Set(newLines);
-  oldLines.forEach(function (ln) { if (!newSet.has(ln)) { var s = document.createElement("span"); s.className = "del"; s.textContent = "- " + ln; pre.appendChild(s); } });
-  newLines.forEach(function (ln) { var s = document.createElement("span"); if (!oldSet.has(ln)) { s.className = "add"; s.textContent = "+ " + ln; } else { s.textContent = "  " + ln; } pre.appendChild(s); });
+  changes(what.old.split("\n"), newText.split("\n")).forEach(function (c) {
+    var s = document.createElement("span");
+    if (c[0] !== "same") { s.className = c[0]; }
+    s.textContent = (c[0] === "add" ? "+ " : c[0] === "del" ? "- " : "  ") + visible(c[1]);
+    pre.appendChild(s);
+  });
   return pre;
 }
 
 async function realApproval(what) {
   $("real").hidden = false;
-  $("project").textContent = what.project;
-  var h, body = $("body");
+  var purpose = what.purpose, h, body = $("body");
+  $("project").textContent = what.project ? visible(what.project) : "All your projects";
+  var titles = { licence: "Create a Ref4ree licence?", setting: "Change a Ref4ree setting?", excuse: "Accept this excuse?", file: "Approve this change?" };
+  if (!titles[purpose]) { throw new Error("unknown purpose"); }
+  $("title").textContent = titles[purpose];
   if (what.words !== undefined) {
-    var setting = what.key.indexOf("workspace:") === 0;
-    $("whatLabel").textContent = setting ? "Setting" : "Excuse";
-    $("what").textContent = setting ? (what.key.indexOf("switches") > 0 ? "Switching Ref4ree off or on" : "Which excuses need your approval")
-      : what.key.replace("declaration:", "");
-    var q = document.createElement("blockquote"); q.style.whiteSpace = "pre-wrap"; q.textContent = what.words; body.appendChild(q);
+    $("whatLabel").textContent = { licence: "This is", setting: "Setting", excuse: "Excuse" }[purpose];
+    $("what").textContent = purpose === "licence" ? "A product licence. Whoever holds it can use Ref4ree without paying."
+      : purpose === "setting" ? (what.key.indexOf("switches") > 0 ? "Switching Ref4ree off or on" : "Which excuses need your approval")
+      : visible(what.key.replace("declaration:", ""));
+    var q = document.createElement("blockquote"); q.style.whiteSpace = "pre-wrap"; q.textContent = visible(what.words); body.appendChild(q);
     h = hex(await sha(enc.encode(what.words.trim())));
   } else {
     $("whatLabel").textContent = what.new === null ? "Removes file" : "File";
-    $("what").textContent = what.key;
+    $("what").textContent = visible(what.key);
     var note = document.createElement("p"); note.style.margin = "12px 0 0";
-    note.textContent = what.new === null ? "This file is removed." : "Green lines are new, red lines are taken out.";
+    note.textContent = what.new === null ? "This file is removed." : "Green lines are put in, red lines are taken out. A moved line shows as both.";
     body.appendChild(note); body.appendChild(showLines(what));
     h = what.new === null ? "deleted" : hex(await sha(unb64(what.new)));
   }
-  window.ref4reeApproval = { key: what.key, h: h };
+  window.ref4reeApproval = { key: what.key, h: h, purpose: purpose, changes: changes };
   $("yes").onclick = async function () {
     try {
       var g = await navigator.credentials.get({ publicKey: {
         rpId: location.hostname,
-        challenge: await sha(enc.encode("ref4ree approval\n" + what.key + "\n" + h + "\n")),
+        challenge: await sha(enc.encode("ref4ree " + purpose + "\n" + what.project + "\n" + what.key + "\n" + h + "\n")),
         userVerification: "required"
       } });
       $("realCode").value = JSON.stringify({ key: what.key, h: h, authData: b64(g.response.authenticatorData),
