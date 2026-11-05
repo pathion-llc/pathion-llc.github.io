@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Ref4ree Approval</title>
+<style>
+:root{color-scheme:dark;--bg:#111214;--panel:#1b1d20;--line:#32353a;--text:#f4f4f2;--dim:#b4b4af;--ok:#62d394;--bad:#ff8a7a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:17px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:560px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:26px;margin:0 0 8px}
+p{margin:0 0 16px;color:var(--dim)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin-top:16px}
+h2{font-size:18px;margin:0 0 6px}
+button{width:100%;min-height:52px;margin-top:10px;border:0;border-radius:10px;background:#f4f4f2;color:#111214;font:600 17px inherit;cursor:pointer}
+button:disabled{opacity:.4;cursor:default}
+.result{margin-top:12px;font-weight:600;overflow-wrap:anywhere}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+blockquote{margin:10px 0 0;padding:12px;border-left:3px solid var(--line);color:var(--text);overflow-wrap:anywhere}
+textarea{width:100%;height:120px;margin-top:10px;background:var(--bg);color:var(--dim);border:1px solid var(--line);border-radius:8px;padding:10px;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace}
+footer{margin-top:24px;font-size:13px;color:var(--dim)}
+</style>
+</head>
+<body>
+<main>
+<h1>Ref4ree Approval</h1>
+<p>A test on this device. Nothing here changes any project, and nothing you do here is sent anywhere.</p>
+
+<section>
+<h2>1. Set up</h2>
+<p>Your device asks for your face, fingerprint or PIN and makes a key that stays on it.</p>
+<button id="setup" type="button">Set up on this device</button>
+<div id="setupResult" class="result" role="status"></div>
+</section>
+
+<section>
+<h2>2. Approve a test</h2>
+<p>You are approving exactly these words:</p>
+<blockquote id="words"></blockquote>
+<button id="approve" type="button" disabled>Approve</button>
+<div id="approveResult" class="result" role="status"></div>
+</section>
+
+<section id="back" hidden>
+<h2>3. Send this back</h2>
+<p>It holds your public key and the signature, and nothing private.</p>
+<textarea id="code" readonly aria-label="The result to send back"></textarea>
+<button id="copy" type="button">Copy</button>
+</section>
+
+<footer>Built by Pathion LLC</footer>
+</main>
+<script>
+"use strict";
+var WORDS = "Ref4ree test approval: this is not a real change.";
+var enc = new TextEncoder();
+var $ = function (id) { return document.getElementById(id); };
+var b64 = function (buf) { return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))); };
+var unb64 = function (s) { return Uint8Array.from(atob(s), function (c) { return c.charCodeAt(0); }); };
+var url64 = function (buf) { return b64(buf).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
+var sha = function (data) { return crypto.subtle.digest("SHA-256", data); };
+function say(id, text, good) { var e = $(id); e.textContent = text; e.className = "result " + (good ? "ok" : "bad"); }
+function load() { try { return JSON.parse(localStorage.getItem("ref4ree-key")); } catch (e) { return null; } }
+function save(k) { try { localStorage.setItem("ref4ree-key", JSON.stringify(k)); } catch (e) {} }
+
+function joined(a, b) {
+  var out = new Uint8Array(a.byteLength + b.byteLength);
+  out.set(new Uint8Array(a), 0); out.set(new Uint8Array(b), a.byteLength);
+  return out;
+}
+
+// a signature comes in one form (DER) and the browser checks another (two fixed-length numbers)
+function rawSignature(der) {
+  var d = new Uint8Array(der), at = 2;
+  if (d[1] & 0x80) { at += d[1] & 0x7f; }
+  function part() {
+    var len = d[at + 1], v = d.slice(at + 2, at + 2 + len);
+    at += 2 + len;
+    while (v.length > 32 && v[0] === 0) { v = v.slice(1); }
+    var out = new Uint8Array(32); out.set(v, 32 - v.length);
+    return out;
+  }
+  var r = part(), s = part();
+  return joined(r, s);
+}
+
+async function checks(key, words, a) {
+  var client = JSON.parse(new TextDecoder().decode(a.clientData));
+  var want = url64(await sha(enc.encode(words)));
+  var rp = new Uint8Array(await sha(enc.encode(location.hostname)));
+  var auth = new Uint8Array(a.authData);
+  if (client.type !== "webauthn.get" || client.challenge !== want) { return false; }
+  if (!rp.every(function (v, i) { return v === auth[i]; })) { return false; }
+  if (!(auth[32] & 4)) { return false; }                     // the device confirmed it was the person
+  var pub = await crypto.subtle.importKey("spki", unb64(key.publicKey), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+  var signed = joined(a.authData, await sha(a.clientData));
+  return crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, pub, rawSignature(a.signature), signed);
+}
+
+$("words").textContent = WORDS;
+if (load()) { $("approve").disabled = false; say("setupResult", "This device is already set up.", true); }
+
+$("setup").onclick = async function () {
+  try {
+    var c = await navigator.credentials.create({ publicKey: {
+      rp: { id: location.hostname, name: "Ref4ree" },
+      user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "Ref4ree approver", displayName: "Ref4ree approver" },
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+      authenticatorSelection: { residentKey: "required", userVerification: "required" },
+      attestation: "none"
+    } });
+    var spki = c.response.getPublicKey && c.response.getPublicKey();
+    if (!spki) { say("setupResult", "This browser could not give the public key. Try another browser.", false); return; }
+    save({ id: url64(c.rawId), publicKey: b64(spki) });
+    $("approve").disabled = false;
+    say("setupResult", "Set up. Now approve the test below.", true);
+  } catch (e) { say("setupResult", "Not set up: " + e.name + ". " + e.message, false); }
+};
+
+$("approve").onclick = async function () {
+  var key = load();
+  try {
+    var g = await navigator.credentials.get({ publicKey: {
+      rpId: location.hostname,
+      challenge: await sha(enc.encode(WORDS)),
+      allowCredentials: [{ type: "public-key", id: unb64(key.id.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(key.id.length / 4) * 4, "=")) }],
+      userVerification: "required"
+    } });
+    var a = { authData: g.response.authenticatorData, clientData: g.response.clientDataJSON, signature: g.response.signature };
+    var good = await checks(key, WORDS, a);
+    var tampered = await checks(key, WORDS + " And one more thing.", a);
+    if (good && !tampered) {
+      say("approveResult", "It worked. Your device signed those exact words, and changed words are refused.", true);
+    } else {
+      say("approveResult", "It did not work: the signature did not check out.", false);
+    }
+    $("code").value = JSON.stringify({ rp: location.hostname, words: WORDS, id: key.id, publicKey: key.publicKey,
+      authData: b64(a.authData), clientData: b64(a.clientData), signature: b64(a.signature) });
+    $("back").hidden = false;
+  } catch (e) { say("approveResult", "Not approved: " + e.name + ". " + e.message, false); }
+};
+
+$("copy").onclick = async function () {
+  try { await navigator.clipboard.writeText($("code").value); $("copy").textContent = "Copied"; }
+  catch (e) { $("code").select(); $("copy").textContent = "Select and copy the text above"; }
+};
+</script>
+</body>
+</html>
