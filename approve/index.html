@@ -254,9 +254,20 @@ async function realApproval(what) {
     $("whatLabel").textContent = what.new === null ? "Removes file" : "File";
     $("what").textContent = visible(what.key);
     var note = document.createElement("p"); note.style.margin = "12px 0 0";
-    note.textContent = what.new === null ? "This file is removed." : "Green lines are put in, red lines are taken out. A moved line shows as both.";
-    body.appendChild(note); body.appendChild(showLines(what));
-    h = what.new === null ? "deleted" : hex(await sha(unb64(what.new)));
+    if (what.new === undefined) {
+      // a change too long for a link (2026-11-08): named by its fingerprint and its line counts; his approval covers
+      // exactly that content, which Ref4ree checks at the commit
+      if (typeof what.new_h !== "string" || !/^[0-9a-f]{64}$/.test(what.new_h)) { throw new Error("no content"); }
+      var n = (what.file_lines || []).map(Number);
+      note.textContent = "This change is too long to show here. The file will have " + n[0] + " lines: " + n[1] +
+        " put in or changed, " + n[2] + " taken out. Your approval covers exactly this content and no other.";
+      body.appendChild(note);
+      h = what.new_h;
+    } else {
+      note.textContent = what.new === null ? "This file is removed." : "Green lines are put in, red lines are taken out. A moved line shows as both.";
+      body.appendChild(note); body.appendChild(showLines(what));
+      h = what.new === null ? "deleted" : hex(await sha(unb64(what.new)));
+    }
   }
   window.ref4reeApproval = { key: what.key, h: h, purpose: purpose, changes: changes };
   $("yes").onclick = async function () {
