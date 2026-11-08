@@ -44,6 +44,7 @@ blockquote{margin:0;padding:14px 16px;background:#0B0B0B;border:1px solid #26262
 pre{margin:0;padding:10px 0;background:#0B0B0B;border:1px solid #262626;border-radius:8px;max-height:60vh;overflow:auto;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 pre span{display:block;min-height:1.5em;padding:0 12px}
 .add{background:#132A1B;color:#BFF0CF}.del{background:#331A17;color:#F6C3BA}
+.head{color:#9A9A95}
 button{font:inherit;width:100%;min-height:54px;border:0;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;font-size:17px;font-weight:700;background:#FFFFFF;color:#0B0B0B}
 button svg{flex:0 0 auto}
 button.quiet{background:#161616;color:#F4F4F2;border:1px solid #3A3A3A;font-weight:600;font-size:15px;min-height:48px}
@@ -100,7 +101,7 @@ footer b{color:#D6D6D2;font-weight:600}
   <ol class="steps" aria-label="How an approval works">
     <li><b>1</b>Read exactly what you are approving.</li>
     <li><b>2</b>Approve with your face, fingerprint or PIN.</li>
-    <li><b>3</b>Send the code back to your builder.</li>
+    <li><b>3</b>Tap “Send to builder”, then tell your builder “approved”.</li>
   </ol>
   <p class="leave">If you did not ask for this or do not agree, close this page. Nothing happens.</p>
 </div>
@@ -184,6 +185,20 @@ function changes(oldLines, newLines) {
   return out;
 }
 
+// a change as Git shows it: each line marked as put in, taken out, or file and position headings
+function showChange(text) {
+  var pre = document.createElement("pre");
+  text.split("\n").forEach(function (line) {
+    var s = document.createElement("span");
+    if (/^(diff --git|index |--- |\+\+\+ |@@)/.test(line)) { s.className = "head"; }
+    else if (line.charAt(0) === "+") { s.className = "add"; }
+    else if (line.charAt(0) === "-") { s.className = "del"; }
+    s.textContent = visible(line);
+    pre.appendChild(s);
+  });
+  return pre;
+}
+
 function showLines(what) {
   var pre = document.createElement("pre");
   var newText = what.new === null ? "" : new TextDecoder().decode(unb64(what.new));
@@ -211,6 +226,30 @@ async function realApproval(what) {
       : visible(what.key.replace("declaration:", ""));
     var q = document.createElement("blockquote"); q.style.whiteSpace = "pre-wrap"; q.textContent = visible(what.words); body.appendChild(q);
     h = hex(await sha(enc.encode(what.words.trim())));
+    // an excuse is approved for one change, which is shown under it (2026-11-08, #287): what is signed is the words and
+    // the change's fingerprint, worked out here from the change shown, so another change is never covered
+    // a link from a Ref4ree before this names no change: its words alone are signed, as that Ref4ree checks them (a
+    // Ref4ree from this one on never accepts words alone, so nothing is approved that it would not otherwise ask for)
+    if (purpose === "excuse" && what.change_fp !== undefined) {
+      if (typeof what.change_fp !== "string" || !/^[0-9a-f]{64}$/.test(what.change_fp)) { throw new Error("no change"); }
+      var lead = document.createElement("p"); lead.style.margin = "16px 0 0";
+      if (typeof what.change === "string") {
+        if (hex(await sha(enc.encode(what.change))) !== what.change_fp) { throw new Error("change altered"); }
+        lead.textContent = what.change.trim() ? "It covers exactly this change, and no other. Green lines are put in, red lines are taken out."
+          : "It covers a commit that changes no file.";
+        body.appendChild(lead);
+        if (what.change.trim()) { body.appendChild(showChange(what.change)); }
+      } else {
+        lead.textContent = "It covers exactly this change, and no other. The change is too long to show here; these are the files it changes:";
+        body.appendChild(lead);
+        var list = document.createElement("pre");
+        (what.change_files || []).forEach(function (f) {
+          var s = document.createElement("span"); s.textContent = visible(String(f[0])) + "   +" + Number(f[1]) + " −" + Number(f[2]); list.appendChild(s);
+        });
+        body.appendChild(list);
+      }
+      h = hex(await sha(enc.encode(what.words.trim() + "\n" + what.change_fp)));
+    }
   } else {
     $("whatLabel").textContent = what.new === null ? "Removes file" : "File";
     $("what").textContent = visible(what.key);
