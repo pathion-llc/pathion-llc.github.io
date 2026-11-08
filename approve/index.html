@@ -200,12 +200,13 @@ async function realApproval(what) {
   $("real").hidden = false;
   var purpose = what.purpose, h, body = $("body");
   $("project").textContent = what.project ? visible(what.project) : "All your projects";
-  var titles = { licence: "Create a Ref4ree licence?", setting: "Change a Ref4ree setting?", excuse: "Accept this excuse?", file: "Approve this change?" };
+  var titles = { licence: "Create a Ref4ree licence?", setting: "Change a Ref4ree setting?", excuse: "Accept this excuse?", file: "Approve this change?", device: "Let a new device approve?" };
   if (!titles[purpose]) { throw new Error("unknown purpose"); }
   $("title").textContent = titles[purpose];
   if (what.words !== undefined) {
-    $("whatLabel").textContent = { licence: "This is", setting: "Setting", excuse: "Excuse" }[purpose];
+    $("whatLabel").textContent = { licence: "This is", setting: "Setting", excuse: "Excuse", device: "This is" }[purpose];
     $("what").textContent = purpose === "licence" ? "A product licence. Whoever holds it can use Ref4ree without paying."
+      : purpose === "device" ? "Another device that approves as you do. Approve only if you set it up yourself just now."
       : purpose === "setting" ? (what.key.indexOf("switches") > 0 ? "Switching Ref4ree off or on" : "Which excuses need your approval")
       : visible(what.key.replace("declaration:", ""));
     var q = document.createElement("blockquote"); q.style.whiteSpace = "pre-wrap"; q.textContent = visible(what.words); body.appendChild(q);
