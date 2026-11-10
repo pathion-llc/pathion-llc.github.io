@@ -311,7 +311,23 @@ function sendable(box) {
     var copied = (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write)
       ? navigator.clipboard.write([new ClipboardItem({ "text/plain": sent.then(word) })])
       : sent.then(function () { return navigator.clipboard.writeText("approved"); });
-    copied = copied.then(function () { return true; }, function () { return false; });
+    // a browser that refuses that (found 2026-11-10: the owner's Chrome on Windows said "Now type" after a send that
+    // worked) is asked again once the send is done, then the older way; the reason it gave is shown if all refuse
+    var why = "";
+    var again = function (e) {
+      why = e && e.name ? e.name : "";
+      return sent.then(function () { return navigator.clipboard.writeText("approved"); }).catch(function (e2) {
+        why = e2 && e2.name ? e2.name : why;
+        var t = document.createElement("textarea");
+        t.value = "approved"; t.setAttribute("readonly", ""); t.style.position = "fixed"; t.style.opacity = "0";
+        document.body.appendChild(t); t.select();
+        var ok = false;
+        try { ok = document.execCommand("copy"); } catch (e3) { ok = false; }
+        document.body.removeChild(t);
+        if (!ok) { throw new Error(why); }
+      });
+    };
+    copied = copied.catch(again).then(function () { return true; }, function () { return false; });
     try { await sent; }
     catch (e) {
       b.disabled = false; b.textContent = "Send to builder";
@@ -320,7 +336,7 @@ function sendable(box) {
     }
     b.textContent = "Sent";
     say("sendResult", await copied ? "Sent, and “approved” is copied. Now paste it into your builder."
-      : "Sent. Now type “approved” to your builder.", true);
+      : "Sent. Now type “approved” to your builder." + (why ? " (This browser would not copy: " + why + ".)" : ""), true);
   };
 }
 
